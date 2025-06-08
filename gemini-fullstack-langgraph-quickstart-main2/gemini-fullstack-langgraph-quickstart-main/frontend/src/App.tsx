@@ -13,6 +13,7 @@ export default function App() {
     Record<string, ProcessedEvent[]>
   >({});
   const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const hasFinalizeEventOccurredRef = useRef(false);
 
   const thread = useStream<{
     messages: Message[];
@@ -26,22 +27,12 @@ export default function App() {
     assistantId: "agent",
     messagesKey: "messages",
     onFinish: (event: any) => {
-      console.log("Finish event: ", event);
-      if (
-        thread.messages &&
-        thread.messages.length > 0 &&
-        thread.messages[thread.messages.length - 1].type === "ai" &&
-        thread.messages[thread.messages.length - 1].id
-      ) {
-        const lastMessage = thread.messages[thread.messages.length - 1];
-        setHistoricalActivities((prevActivities) => ({
-          ...prevActivities,
-          [lastMessage.id!]: [...processedEventsTimeline],
-        }));
-        setProcessedEventsTimeline([]);
-      }
+      console.log("[onFinish] Stream finished. Event:", JSON.stringify(event, null, 2));
+      console.log("[onFinish] current thread.messages:", JSON.stringify(thread.messages, null, 2));
     },
     onUpdateEvent: (event: any) => {
+      console.log("[onUpdateEvent] Received event:", JSON.stringify(event, null, 2));
+      console.log("[onUpdateEvent] current thread.messages:", JSON.stringify(thread.messages, null, 2));
       let processedEvent: ProcessedEvent | null = null;
       if (event.generate_query) {
         processedEvent = {
@@ -62,19 +53,25 @@ export default function App() {
           }.`,
         };
       } else if (event.reflection) {
+        let reflectionData = "Reflection complete."; // Default message
+        if (event.reflection.is_sufficient) {
+          reflectionData = "Search successful, generating final answer.";
+        } else if (event.reflection.follow_up_queries && event.reflection.follow_up_queries.length > 0) {
+          reflectionData = `Need more information, searching for ${event.reflection.follow_up_queries.join(", ")}`;
+        } else {
+          // Case where it's not sufficient but no follow_up_queries are provided (as seen in logs)
+          reflectionData = "Need more information, but no specific follow-up queries were generated.";
+        }
         processedEvent = {
           title: "Reflection",
-          data: event.reflection.is_sufficient
-            ? "Search successful, generating final answer."
-            : `Need more information, searching for ${event.reflection.follow_up_queries.join(
-                ", "
-              )}`,
+          data: reflectionData,
         };
       } else if (event.finalize_answer) {
         processedEvent = {
           title: "Finalizing Answer",
           data: "Composing and presenting the final answer.",
         };
+        hasFinalizeEventOccurredRef.current = true;
       }
       if (processedEvent) {
         setProcessedEventsTimeline((prevEvents) => [
@@ -96,10 +93,28 @@ export default function App() {
     }
   }, [thread.messages]);
 
+  useEffect(() => {
+    if (
+      hasFinalizeEventOccurredRef.current &&
+      !thread.isLoading &&
+      thread.messages.length > 0
+    ) {
+      const lastMessage = thread.messages[thread.messages.length - 1];
+      if (lastMessage && lastMessage.type === "ai" && lastMessage.id) {
+        setHistoricalActivities((prev) => ({
+          ...prev,
+          [lastMessage.id!]: [...processedEventsTimeline],
+        }));
+      }
+      hasFinalizeEventOccurredRef.current = false;
+    }
+  }, [thread.messages, thread.isLoading, processedEventsTimeline]);
+
   const handleSubmit = useCallback(
     (submittedInputValue: string, effort: string, model: string) => {
       if (!submittedInputValue.trim()) return;
       setProcessedEventsTimeline([]);
+      hasFinalizeEventOccurredRef.current = false;
 
       // convert effort to, initial_search_query_count and max_research_loops
       // low means max 1 loop and 1 query
@@ -144,6 +159,10 @@ export default function App() {
     thread.stop();
     window.location.reload();
   }, [thread]);
+
+  console.log("[App Render] thread.messages:", JSON.stringify(thread.messages, null, 2));
+  console.log("[App Render] processedEventsTimeline:", JSON.stringify(processedEventsTimeline, null, 2));
+  console.log("[App Render] historicalActivities:", JSON.stringify(historicalActivities, null, 2));
 
   return (
     <div className="flex h-screen bg-neutral-800 text-neutral-100 font-sans antialiased">
