@@ -13,7 +13,6 @@ export default function App() {
     Record<string, ProcessedEvent[]>
   >({});
   const scrollAreaRef = useRef<HTMLDivElement>(null);
-  const hasFinalizeEventOccurredRef = useRef(false);
 
   const thread = useStream<{
     messages: Message[];
@@ -27,7 +26,20 @@ export default function App() {
     assistantId: "agent",
     messagesKey: "messages",
     onFinish: (event: any) => {
-      console.log(event);
+      console.log("Finish event: ", event);
+      if (
+        thread.messages &&
+        thread.messages.length > 0 &&
+        thread.messages[thread.messages.length - 1].type === "ai" &&
+        thread.messages[thread.messages.length - 1].id
+      ) {
+        const lastMessage = thread.messages[thread.messages.length - 1];
+        setHistoricalActivities((prevActivities) => ({
+          ...prevActivities,
+          [lastMessage.id!]: [...processedEventsTimeline],
+        }));
+        setProcessedEventsTimeline([]);
+      }
     },
     onUpdateEvent: (event: any) => {
       let processedEvent: ProcessedEvent | null = null;
@@ -63,7 +75,6 @@ export default function App() {
           title: "Finalizing Answer",
           data: "Composing and presenting the final answer.",
         };
-        hasFinalizeEventOccurredRef.current = true;
       }
       if (processedEvent) {
         setProcessedEventsTimeline((prevEvents) => [
@@ -85,28 +96,10 @@ export default function App() {
     }
   }, [thread.messages]);
 
-  useEffect(() => {
-    if (
-      hasFinalizeEventOccurredRef.current &&
-      !thread.isLoading &&
-      thread.messages.length > 0
-    ) {
-      const lastMessage = thread.messages[thread.messages.length - 1];
-      if (lastMessage && lastMessage.type === "ai" && lastMessage.id) {
-        setHistoricalActivities((prev) => ({
-          ...prev,
-          [lastMessage.id!]: [...processedEventsTimeline],
-        }));
-      }
-      hasFinalizeEventOccurredRef.current = false;
-    }
-  }, [thread.messages, thread.isLoading, processedEventsTimeline]);
-
   const handleSubmit = useCallback(
     (submittedInputValue: string, effort: string, model: string) => {
       if (!submittedInputValue.trim()) return;
       setProcessedEventsTimeline([]);
-      hasFinalizeEventOccurredRef.current = false;
 
       // convert effort to, initial_search_query_count and max_research_loops
       // low means max 1 loop and 1 query
